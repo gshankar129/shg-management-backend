@@ -40,11 +40,16 @@ app.get("/", (req, res) => {
   });
 });
 
+// API Health check
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'OK', message: 'SHG Backend API running' });
+});
+
 // 5. Global 404 Route Handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Route not found',
+    message: `Route not found: ${req.method} ${req.originalUrl}`,
   });
 });
 
