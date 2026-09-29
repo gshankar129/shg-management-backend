@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+ 
+  
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Role {
+  SUPER_ADMIN // For overall system/platform admins
+  ADMIN       // SHG Group admin
+  MEMBER      // SHG Group Member 
+  GUEST       // Newly registered user with no Group (fixed spelling)
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  DISBURSED
+  REPAID
+  DEFAULTED
+  REJECTED
+}
+
+enum TransactionType {
+  SAVINGS_DEPOSIT
+  SAVINGS_WITHDRAWAL
+  PENALTY
+}
+
+// ==========================================
+// MODELS
+// ==========================================
+
+model User {
+  id       Int      @id @default(autoincrement())
+
+  name       String
+  email      String    @unique
+  phone      String?   @unique
+  password   String
+  
+  // Default to GUEST for initial registration
+  role     Role       @default(GUEST)
+
+  isActive      Boolean @default(true)
+  emailVerified Boolean @default(false)
+
+  // Relation to Group (Optional - NULL for GUEST users)
+  groupId     Int?
+  group       Group?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  // Groups created by this user
+  createdGroups Group[]   @relation("GroupCreator")
+
+  // Join requests sent by this user
+  joinRequests JoinRequest[]
+
+  // Financial Relations
+  savingsAccount     SavingsAccount?
+  loans              Loan[]
+  collectedSavings   SavingsTransaction[] @relation("CollectedBySavings")
+  collectedRepayment LoanRepayment[]      @relation("CollectedByRepayment")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([phone])
+  @@index([groupId])
+}
+
+model Group {
+  id                      Int          @id @default(autoincrement())
+  name                    String
+  village                 String
+  groupCode               String        @unique // Unique code (e.g., "SHG-1024")
+  mandatedSavingsAmount   Decimal       @default(100.00) @db.Decimal(12, 2)
+
+  // Created By relation
+  createdById Int
+  createdBy   User @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  
+  // Members of this group
+  members User[]
+
+  // Meetings held by this group
+  meetings Meeting[]
+
+  // Pending member requests
+  joinRequests JoinRequest[]
+
+  loans                 Loan[]
+  savingsTransactions   SavingsTransaction[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupCode])
+}
+
+model JoinRequest {
+  id     Int           @id @default(autoincrement())
+  status RequestStatus @default(PENDING)
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  groupId Int
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, groupId])
+  @@index([groupId, status])
+}
+
+model Meeting {
+  id          Int      @id @default(autoincrement())
+  title       String
+  meetingDate DateTime
+  
+  groupId Int
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId])
+}
+
+// ==========================================
+// NEW: SAVINGS & LEDGERS
+// ==========================================
+
+model SavingsAccount {
+  id             Int                  @id @default(autoincrement())
+  userId         Int                  @unique
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentBalance Decimal              @default(0.00) @db.Decimal(12, 2)
+  transactions   SavingsTransaction[]
+
+  updatedAt      DateTime             @updatedAt
+}
+
+model SavingsTransaction {
+  id               Int             @id @default(autoincrement())
+  type             TransactionType @default(SAVINGS_DEPOSIT)
+  amount           Decimal         @db.Decimal(12, 2)
+  txnDate          DateTime        @default(now())
+
+  savingsAccountId Int
+  savingsAccount   SavingsAccount  @relation(fields: [savingsAccountId], references: [id], onDelete: Restrict)
+
+  groupId          Int
+  group            Group           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  collectedById    Int?
+  collectedBy      User?           @relation("CollectedBySavings", fields: [collectedById], references: [id], onDelete: SetNull)
+
+  createdAt        DateTime        @default(now())
+
+  @@index([savingsAccountId])
+  @@index([groupId])
+}
+
+// ==========================================
+// NEW: LOANS & REPAYMENTS
+// ==========================================
+
+model Loan {
+  id                   Int             @id @default(autoincrement())
+  principalAmount      Decimal         @db.Decimal(12, 2)
+  annualInterestRate   Decimal         @default(12.00) @db.Decimal(5, 2) // 12% annual
+  tenureMonths         Int
+  monthlyEmi           Decimal         @db.Decimal(12, 2)
+  outstandingPrincipal Decimal         @db.Decimal(12, 2)
+  status               LoanStatus      @default(PENDING)
+
+  userId               Int
+  user                 User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  groupId              Int
+  group                Group           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  repayments           LoanRepayment[]
+
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([status])
+}
+
+model LoanRepayment {
+  id            Int      @id @default(autoincrement())
+  amountPaid    Decimal  @db.Decimal(12, 2)
+  paymentDate   DateTime @default(now())
+  receiptNo     String   @unique
+
+  loanId        Int
+  loan          Loan     @relation(fields: [loanId], references: [id], onDelete: Restrict)
+
+  collectedById Int?
+  collectedBy   User?    @relation("CollectedByRepayment", fields: [collectedById], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now())
+
+  @@index([loanId])
+}
+
+
